@@ -263,11 +263,12 @@ def main() -> None:
     for i, frame_idx in enumerate(frame_indices, start=1):
         u.trajectory[frame_idx]
 
-        atom_dist = distance_array(
-            x_group.positions,
-            y_group.positions,
-            backend=args.backend,
-        )
+      atom_dist = distance_array(
+          x_group.positions,
+          y_group.positions,
+          box=u.dimensions,
+          backend=args.backend,
+      )
 
         residue_min = reduce_atom_distances_to_residue_min(
             atom_dist,
