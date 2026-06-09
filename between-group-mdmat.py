@@ -159,7 +159,12 @@ def residue_labels(residues) -> list[str]:
 
 
 def selected_frame_indices(universe: mda.Universe, begin: float | None, end: float | None, stride: int) -> list[int]:
+    """
+    Collect frame indices within the [begin, end] time window, keeping every
+    Nth frame relative to the start of the window (not absolute frame number).
+    """
     indices = []
+    window_counter = 0  # counts frames that pass the time filter
 
     for ts in universe.trajectory:
         time_ps = float(ts.time)
@@ -168,10 +173,12 @@ def selected_frame_indices(universe: mda.Universe, begin: float | None, end: flo
             continue
         if end is not None and time_ps > end:
             continue
-        if ts.frame % stride != 0:
-            continue
 
-        indices.append(ts.frame)
+        # stride relative to the window, not the absolute frame number
+        if window_counter % stride == 0:
+            indices.append(ts.frame)
+
+        window_counter += 1
 
     return indices
 
@@ -258,17 +265,17 @@ def main() -> None:
     sum_distance = np.zeros((n_x_res, n_y_res), dtype=np.float64)
     min_distance = np.full((n_x_res, n_y_res), np.inf, dtype=np.float64)
     contact_counts = np.zeros((n_x_res, n_y_res), dtype=np.uint32)
-    first_frame_contacts = None
+    first_frame_contacts: np.ndarray | None = None
 
     for i, frame_idx in enumerate(frame_indices, start=1):
         u.trajectory[frame_idx]
 
-      atom_dist = distance_array(
-          x_group.positions,
-          y_group.positions,
-          box=u.dimensions,
-          backend=args.backend,
-      )
+        atom_dist = distance_array(
+            x_group.positions,
+            y_group.positions,
+            box=u.dimensions,
+            backend=args.backend,
+        )
 
         residue_min = reduce_atom_distances_to_residue_min(
             atom_dist,
@@ -296,7 +303,15 @@ def main() -> None:
     mean_distance_out = mean_distance * output_scale
     min_distance_out = min_distance * output_scale
 
-    npz_path = out_prefix.with_suffix(".npz")
+    # Replace any np.inf in min_distance (residue pairs never observed) with np.nan
+    min_distance_out = np.where(np.isinf(min_distance_out), np.nan, min_distance_out)
+
+    # Use string concatenation for output paths to avoid clobbering dots in the prefix
+    npz_path = Path(str(out_prefix) + ".npz")
+
+    # first_frame_contacts is guaranteed non-None here due to the frame guard above,
+    # but we assert for static type checkers
+    assert first_frame_contacts is not None
 
     np.savez_compressed(
         npz_path,
@@ -340,10 +355,10 @@ def main() -> None:
         },
     }
 
-    json_path = out_prefix.with_name(out_prefix.name + "_metadata.json")
+    json_path = Path(str(out_prefix) + "_metadata.json")
     json_path.write_text(json.dumps(metadata, indent=2))
 
-    labels_path = out_prefix.with_name(out_prefix.name + "_labels.csv")
+    labels_path = Path(str(out_prefix) + "_labels.csv")
     labels_df = pd.concat(
         [
             pd.DataFrame({"axis": "x", "index": np.arange(n_x_res), "label": x_labels}),
@@ -355,25 +370,25 @@ def main() -> None:
 
     if args.csv:
         write_csv_matrix(
-            out_prefix.with_name(out_prefix.name + "_mean_distance.csv"),
+            Path(str(out_prefix) + "_mean_distance.csv"),
             mean_distance_out,
             x_labels,
             y_labels,
         )
         write_csv_matrix(
-            out_prefix.with_name(out_prefix.name + "_min_distance.csv"),
+            Path(str(out_prefix) + "_min_distance.csv"),
             min_distance_out,
             x_labels,
             y_labels,
         )
         write_csv_matrix(
-            out_prefix.with_name(out_prefix.name + "_contact_frequency.csv"),
+            Path(str(out_prefix) + "_contact_frequency.csv"),
             contact_frequency,
             x_labels,
             y_labels,
         )
         write_csv_matrix(
-            out_prefix.with_name(out_prefix.name + "_first_frame_contacts.csv"),
+            Path(str(out_prefix) + "_first_frame_contacts.csv"),
             first_frame_contacts,
             x_labels,
             y_labels,
